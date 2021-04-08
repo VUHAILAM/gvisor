@@ -1255,20 +1255,13 @@ func (e *endpoint) Readiness(mask waiter.EventMask) waiter.EventMask {
 }
 
 // verifyChecksum verifies the checksum unless RX checksum offload is enabled.
-// On IPv4, UDP checksum is optional, and a zero value means the transmitter
-// omitted the checksum generation (RFC768).
-// On IPv6, UDP checksum is not optional (RFC2460 Section 8.1).
 func verifyChecksum(hdr header.UDP, pkt *stack.PacketBuffer) bool {
-	if !pkt.RXTransportChecksumValidated &&
-		(hdr.Checksum() != 0 || pkt.NetworkProtocolNumber == header.IPv6ProtocolNumber) {
-		netHdr := pkt.Network()
-		xsum := header.PseudoHeaderChecksum(ProtocolNumber, netHdr.DestinationAddress(), netHdr.SourceAddress(), hdr.Length())
-		for _, v := range pkt.Data().Views() {
-			xsum = header.Checksum(v, xsum)
-		}
-		return hdr.CalculateChecksum(xsum) == 0xffff
+	if pkt.RXTransportChecksumValidated {
+		return true
 	}
-	return true
+	netHdr := pkt.Network()
+	data := buffer.NewVectorisedView(pkt.Data().Size(), pkt.Data().Views())
+	return hdr.IsChecksumValid(netHdr.SourceAddress(), netHdr.DestinationAddress(), pkt.NetworkProtocolNumber, data)
 }
 
 // HandlePacket is called by the stack when new packets arrive to this transport
@@ -1284,7 +1277,6 @@ func (e *endpoint) HandlePacket(id stack.TransportEndpointID, pkt *stack.PacketB
 	}
 
 	if !verifyChecksum(hdr, pkt) {
-		// Checksum Error.
 		e.stack.Stats().UDP.ChecksumErrors.Increment()
 		e.stats.ReceiveErrors.ChecksumErrors.Increment()
 		return

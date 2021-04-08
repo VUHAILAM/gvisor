@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/btree"
 	"gvisor.dev/gvisor/pkg/tcpip"
+	"gvisor.dev/gvisor/pkg/tcpip/buffer"
 	"gvisor.dev/gvisor/pkg/tcpip/seqnum"
 )
 
@@ -319,6 +320,14 @@ func (b TCP) SetUrgentPoiner(urgentPointer uint16) {
 func (b TCP) CalculateChecksum(partialChecksum uint16) uint16 {
 	// Calculate the rest of the checksum.
 	return Checksum(b[:b.DataOffset()], partialChecksum)
+}
+
+// IsChecksumValid performs checksum validation.
+func (b TCP) IsChecksumValid(src, dst tcpip.Address, data buffer.VectorisedView) bool {
+	xsum := PseudoHeaderChecksum(TCPProtocolNumber, src, dst, uint16(b.DataOffset())+uint16(data.Size()))
+	xsum = b.CalculateChecksum(xsum)
+	xsum = ChecksumVV(data, xsum)
+	return xsum == 0xffff
 }
 
 // Options returns a slice that holds the unparsed TCP options in the segment.

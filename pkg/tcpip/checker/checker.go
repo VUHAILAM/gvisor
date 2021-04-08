@@ -53,9 +53,8 @@ func IPv4(t *testing.T, b []byte, checkers ...NetworkChecker) {
 		t.Error("Not a valid IPv4 packet")
 	}
 
-	xsum := ipv4.CalculateChecksum()
-	if xsum != 0 && xsum != 0xffff {
-		t.Errorf("Bad checksum: 0x%x, checksum in packet: 0x%x", xsum, ipv4.Checksum())
+	if !ipv4.IsChecksumValid() {
+		t.Error("Bad checksum")
 	}
 
 	for _, f := range checkers {
@@ -400,18 +399,11 @@ func TCP(checkers ...TransportChecker) NetworkChecker {
 			t.Errorf("Bad protocol, got = %d, want = %d", p, header.TCPProtocolNumber)
 		}
 
-		// Verify the checksum.
 		tcp := header.TCP(last.Payload())
-		l := uint16(len(tcp))
-
-		xsum := header.Checksum([]byte(first.SourceAddress()), 0)
-		xsum = header.Checksum([]byte(first.DestinationAddress()), xsum)
-		xsum = header.Checksum([]byte{0, byte(last.TransportProtocol())}, xsum)
-		xsum = header.Checksum([]byte{byte(l >> 8), byte(l)}, xsum)
-		xsum = header.Checksum(tcp, xsum)
-
-		if xsum != 0 && xsum != 0xffff {
-			t.Errorf("Bad checksum: 0x%x, checksum in segment: 0x%x", xsum, tcp.Checksum())
+		payload := tcp.Payload()
+		vv := buffer.NewVectorisedView(len(payload), []buffer.View{buffer.View(payload)})
+		if !tcp.IsChecksumValid(first.SourceAddress(), first.DestinationAddress(), vv) {
+			t.Errorf("Bad checksum")
 		}
 
 		// Run the transport checkers.
@@ -430,6 +422,7 @@ func UDP(checkers ...TransportChecker) NetworkChecker {
 	return func(t *testing.T, h []header.Network) {
 		t.Helper()
 
+		first := h[0]
 		last := h[len(h)-1]
 
 		if p := last.TransportProtocol(); p != header.UDPProtocolNumber {
@@ -437,6 +430,22 @@ func UDP(checkers ...TransportChecker) NetworkChecker {
 		}
 
 		udp := header.UDP(last.Payload())
+
+		payload := udp.Payload()
+		vv := buffer.NewVectorisedView(len(payload), []buffer.View{buffer.View(payload)})
+		var netProto tcpip.NetworkProtocolNumber
+		switch len(first.SourceAddress()) {
+		case header.IPv4AddressSize:
+			netProto = header.IPv4ProtocolNumber
+		case header.IPv6AddressSize:
+			netProto = header.IPv6ProtocolNumber
+		default:
+			t.Errorf("Unknown network protocol")
+		}
+		if !udp.IsChecksumValid(first.SourceAddress(), first.DestinationAddress(), netProto, vv) {
+			t.Errorf("Bad checksum")
+		}
+
 		for _, f := range checkers {
 			f(t, udp)
 		}

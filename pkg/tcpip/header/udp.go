@@ -19,6 +19,7 @@ import (
 	"math"
 
 	"gvisor.dev/gvisor/pkg/tcpip"
+	"gvisor.dev/gvisor/pkg/tcpip/buffer"
 )
 
 const (
@@ -114,6 +115,29 @@ func (b UDP) SetLength(length uint16) {
 func (b UDP) CalculateChecksum(partialChecksum uint16) uint16 {
 	// Calculate the rest of the checksum.
 	return Checksum(b[:UDPMinimumSize], partialChecksum)
+}
+
+// IsChecksumValid performs checksum validation.
+func (b UDP) IsChecksumValid(src, dst tcpip.Address, netProto tcpip.NetworkProtocolNumber, data buffer.VectorisedView) bool {
+	// On IPv4, UDP checksum is optional, and a zero value means the transmitter
+	// omitted the checksum generation, as per RFC 768:
+	//
+	//   An all zero transmitted checksum value means that the transmitter
+	//   generated  no checksum  (for debugging or for higher level protocols that
+	//   don't care).
+	//
+	// On IPv6, UDP checksum is not optional, as per RFC 2460 Section 8.1:
+	//
+	//   Unlike IPv4, when UDP packets are originated by an IPv6 node, the UDP
+	//   checksum is not optional.
+	if b.Checksum() == 0 && netProto == IPv4ProtocolNumber {
+		return true
+	}
+	xsum := PseudoHeaderChecksum(UDPProtocolNumber, dst, src, b.Length())
+	for _, v := range data.Views() {
+		xsum = Checksum(v, xsum)
+	}
+	return b.CalculateChecksum(xsum) == 0xffff
 }
 
 // Encode encodes all the fields of the udp header.
